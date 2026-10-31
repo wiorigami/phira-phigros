@@ -1,0 +1,106 @@
+name: Build & Publish Phira Static Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      songs:
+        description: "Songs to include: all, or a number (e.g. 28)"
+        default: "all"
+        required: false
+      levels:
+        description: "Difficulties: IN,AT (default) or EZ,HD,IN,AT"
+        default: "IN,AT"
+        required: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies (ffmpeg; sips is built in)
+        run: |
+          set -e
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            brew install ffmpeg
+          fi
+          ffmpeg -version | head -1
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r pipeline/requirements.txt
+
+      - name: Build dataset (Phigros_Resource -> Phira chart packages)
+        run: |
+          set -e
+          python3 pipeline/build.py \
+            --songs "${{ github.event.inputs.songs || 'all' }}" \
+            --levels "${{ github.event.inputs.levels || 'IN,AT' }}" \
+            --jobs 8
+
+      - name: Publish data (Releases + Pages content)
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PAGES_BASE: ${{ format('https://{0}.github.io/{1}', github.repository_owner, github.event.repository.name) }}
+        run: |
+          set -e
+          python3 publish/publish.py --repo "$GITHUB_REPOSITORY" --pages-base "$PAGES_BASE"
+
+      - name: Upload chart packages + images to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG=$(python3 -c "import json;print(json.load(open('release-plan.json'))['tag'])")
+          CTAG="$TAG-charts"
+          ATAG="$TAG-assets"
+          if gh release view "$CTAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $CTAG already exists - skipping chart upload (data unchanged)."
+          else
+            gh release create "$CTAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Phira data $TAG (charts)" --notes "Chart packages for the static Shadowrocket setup."
+            xargs -n 50 gh release upload "$CTAG" --clobber --repo "$GITHUB_REPOSITORY" < upload-charts.txt
+          fi
+          if gh release view "$ATAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $ATAG already exists - skipping image upload (data unchanged)."
+          else
+            gh release create "$ATAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Phira data $TAG (images)" --notes "Illustrations / preview audio for the static Shadowrocket setup."
+            xargs -n 50 gh release upload "$ATAG" --clobber --repo "$GITHUB_REPOSITORY" < upload-assets.txt
+          fi
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: published
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

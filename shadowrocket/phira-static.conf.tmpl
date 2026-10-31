@@ -1,0 +1,44 @@
+#!name=Phira 未上架→观赏 替换（GitHub 静态版）
+#!desc=把 Phira「未上架(Unstable) → 观赏(Visual)」分区替换为 Phigros 谱面（静态资源托管在 GitHub Releases/Pages，无需本地服务器）
+#
+# 资源索引（自动生成，勿改）: {{PAGES_BASE}}
+# 使用：Shadowrocket 生成并信任 CA 证书 → 对本配置开启 HTTPS 解密 → 使用配置。
+# 搜索说明：静态版不支持服务端过滤，搜索框会显示第 1 页（原列表），翻页/排序可用。
+
+[General]
+bypass-system = true
+skip-proxy = 127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,localhost,*.local,captive.apple.com
+dns-server = system
+fallback-dns-server = system
+
+[Rule]
+# Phira API 与 GitHub 资源都直连（MITM 改写不受影响）
+DOMAIN,phira.5wyxi.com,DIRECT
+DOMAIN-SUFFIX,github.io,DIRECT
+DOMAIN-SUFFIX,githubusercontent.com,DIRECT
+DOMAIN,github.com,DIRECT
+DOMAIN-SUFFIX,objects.githubusercontent.com,DIRECT
+FINAL,DIRECT
+
+[URL Rewrite]
+# ===== 未上架(type=2) + 观赏(division=visual) 列表 → 静态分页 JSON =====
+# 客户端查询参数顺序随机，因此用 6 条规则覆盖 type/division/page 的 6 种相对顺序；
+# 目标页号来自 page= 捕获组（每条规则捕获组序号不同）。
+^https?://phira\.5wyxi\.com/chart\?(.*)type=2(.*)division=visual(.*)page=([0-9]+)(.*)$ {{PAGES_BASE}}/popular/page$4.json 302
+^https?://phira\.5wyxi\.com/chart\?(.*)type=2(.*)page=([0-9]+)(.*)division=visual(.*)$ {{PAGES_BASE}}/popular/page$3.json 302
+^https?://phira\.5wyxi\.com/chart\?(.*)division=visual(.*)type=2(.*)page=([0-9]+)(.*)$ {{PAGES_BASE}}/popular/page$4.json 302
+^https?://phira\.5wyxi\.com/chart\?(.*)division=visual(.*)page=([0-9]+)(.*)type=2(.*)$ {{PAGES_BASE}}/popular/page$3.json 302
+^https?://phira\.5wyxi\.com/chart\?(.*)page=([0-9]+)(.*)type=2(.*)division=visual(.*)$ {{PAGES_BASE}}/popular/page$2.json 302
+^https?://phira\.5wyxi\.com/chart\?(.*)page=([0-9]+)(.*)division=visual(.*)type=2(.*)$ {{PAGES_BASE}}/popular/page$2.json 302
+# ===== 自定义谱面 id（99xxxx）的附属接口 → 静态 JSON =====
+^https?://phira\.5wyxi\.com/chart/(9[0-9]{5})$ {{PAGES_BASE}}/chart/$1.json 302
+^https?://phira\.5wyxi\.com/chart/(9[0-9]{5})/rate(\?.*)?$ {{PAGES_BASE}}/stub/rate.json 302
+^https?://phira\.5wyxi\.com/record/best/(9[0-9]{5})(\?.*)?$ {{PAGES_BASE}}/stub/best.json 302
+^https?://phira\.5wyxi\.com/record/list15/(9[0-9]{5})(\?.*)?$ {{PAGES_BASE}}/stub/record-list.json 302
+^https?://phira\.5wyxi\.com/user/(9[0-9]{5})(\?.*)?$ {{PAGES_BASE}}/stub/user.json 302
+# ===== 游玩结束的成绩上传（POST）=====
+# TODO(shadowrocket-ops): replace with the verified mechanism (Map Local text / Script) returning:
+# {"id":1,"expDelta":0.0,"newBest":false,"improvement":0,"newRks":0.0}
+
+[MITM]
+hostname = phira.5wyxi.com
