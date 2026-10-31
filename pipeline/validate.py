@@ -29,8 +29,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="only print the final summary line")
     parser.add_argument("--fast", action="store_true",
                         help="skip deep checks (music/preview duration, decode)")
+    parser.add_argument("--data-dir", default=None,
+                        help="validate a relocated data tree instead of <repo root>/data")
     args = parser.parse_args(argv)
 
+    if args.data_dir:
+        build.configure_paths(args.data_dir)
     failures = build.validate_catalog(verbose=not args.quiet, write_report=True,
                                       deep=not args.fast)
     if args.quiet:

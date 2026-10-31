@@ -50,19 +50,55 @@ except ImportError:  # pragma: no cover - broken environment
 # Paths / constants
 # --------------------------------------------------------------------------- #
 PIPELINE_DIR = Path(__file__).resolve().parent
-ROOT = PIPELINE_DIR.parent                      # phira-mitm/
-DATA = ROOT / "data"
-RAW = DATA / "raw"
-RAW_INFO = RAW / "info"
-RAW_CHART = RAW / "chart"
-RAW_MUSIC = RAW / "music"
-RAW_ILL = RAW / "illustration"
-RAW_ILL_LOW = RAW / "illustrationLowRes"
-CHARTS = DATA / "charts"
-IMAGES = DATA / "images"
-MANIFEST_PATH = DATA / "build-manifest.json"
-CATALOG_PATH = DATA / "catalog.json"
-REPORT_PATH = DATA / "validate-report.json"
+# Repo root resolved from the script location (works for phira-mitm/ locally and
+# for a fresh GitHub checkout where the repo root is the cwd); never a
+# machine-specific absolute path.
+ROOT = PIPELINE_DIR.parent
+DEFAULT_DATA_DIR = ROOT / "data"
+
+# Configured data/output directories (see configure_paths()); defaults are
+# applied at import time so validate.py and library callers keep working.
+DATA: Path = DEFAULT_DATA_DIR
+RAW: Path = DATA / "raw"
+RAW_INFO: Path = RAW / "info"
+RAW_CHART: Path = RAW / "chart"
+RAW_MUSIC: Path = RAW / "music"
+RAW_ILL: Path = RAW / "illustration"
+RAW_ILL_LOW: Path = RAW / "illustrationLowRes"
+CHARTS: Path = DATA / "charts"
+IMAGES: Path = DATA / "images"
+MANIFEST_PATH: Path = DATA / "build-manifest.json"
+CATALOG_PATH: Path = DATA / "catalog.json"
+REPORT_PATH: Path = DATA / "validate-report.json"
+
+
+def configure_paths(data_dir: str | os.PathLike | None = None) -> Path:
+    """Resolve every data/output path used by the pipeline.
+
+    Default: ``<repo root>/data`` where the repo root is inferred from this
+    file's location (``pipeline/build.py`` -> ``..``). ``--data-dir`` overrides
+    that for a fully relocatable cache/output tree (raw sources, zips, images,
+    catalog, manifest, report all move together). Must be called before any
+    filesystem access; main() does this from the CLI.
+    """
+    global DATA, RAW, RAW_INFO, RAW_CHART, RAW_MUSIC, RAW_ILL, RAW_ILL_LOW
+    global CHARTS, IMAGES, MANIFEST_PATH, CATALOG_PATH, REPORT_PATH
+    DATA = Path(data_dir).expanduser().resolve() if data_dir else DEFAULT_DATA_DIR
+    RAW = DATA / "raw"
+    RAW_INFO = RAW / "info"
+    RAW_CHART = RAW / "chart"
+    RAW_MUSIC = RAW / "music"
+    RAW_ILL = RAW / "illustration"
+    RAW_ILL_LOW = RAW / "illustrationLowRes"
+    CHARTS = DATA / "charts"
+    IMAGES = DATA / "images"
+    MANIFEST_PATH = DATA / "build-manifest.json"
+    CATALOG_PATH = DATA / "catalog.json"
+    REPORT_PATH = DATA / "validate-report.json"
+    return DATA
+
+
+configure_paths()
 
 RAW_BASE = "https://raw.githubusercontent.com/7aGiven/Phigros_Resource"
 LEVELS = ["EZ", "HD", "IN", "AT"]
@@ -176,6 +212,32 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
 
 def atomic_write_json(path: Path, obj) -> None:
     atomic_write_bytes(path, (json.dumps(obj, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+
+
+# --------------------------------------------------------------------------- #
+# External tooling (ffmpeg/ffprobe mandatory; sips optional, ffmpeg fallback)
+# --------------------------------------------------------------------------- #
+def _tool(name: str) -> str | None:
+    return shutil.which(name)
+
+
+def require_tools(need_encoding: bool = True) -> None:
+    """Fail early and clearly when a CI runner lacks required binaries.
+
+    ``ffprobe``+``ffmpeg`` are mandatory for music probing / preview cutting
+    (and ffmpeg also covers JPEG conversion when macOS ``sips`` is absent, so
+    the pipeline runs on Linux runners too). ``sips`` is optional.
+    """
+    required = ["ffmpeg", "ffprobe"] if need_encoding else ["ffprobe"]
+    missing = [name for name in required if _tool(name) is None]
+    if missing:
+        sys.exit(
+            "missing required tool(s) on PATH: " + ", ".join(missing) + "\n"
+            "  install: macOS `brew install ffmpeg` (sips is built in); "
+            "Ubuntu `sudo apt-get install -y ffmpeg`"
+        )
+    if need_encoding and _tool("sips") is None:
+        log("      note: `sips` not found - illustration downscaling will use ffmpeg")
 
 
 # --------------------------------------------------------------------------- #
@@ -371,7 +433,18 @@ def parse_info(raw_info: Path = RAW_INFO) -> list[dict]:
 
 def plan_entries(songs: list[dict], count: int | None, levels: list[str],
                  max_entries: int) -> list[dict]:
-    """Deterministically select (song, level) chart entries in info.tsv order."""
+    """Deterministically select (song, level) chart entries in info.tsv order.
+
+    ID ORDERING RULE (stable across runs; do not change casually):
+      song-major - for each song in info.tsv order, emit its requested
+      difficulties in canonical EZ,HD,IN,AT order.
+    A fresh ``--levels IN,AT`` build therefore interleaves, e.g.
+      990001 Glaciaxion IN, 990002 Eradication Catastrophe IN,
+      990003 Credits IN, 990004 Credits AT, 990005 Dlyrotz IN, ...
+    The live tunnel dataset was built incrementally (IN block 990001-990327,
+    then AT appended 990328-990383), so its ids differ, but each build is
+    contiguous from ``--start-id`` and deterministic for the same selection.
+    """
     plans: list[dict] = []
     seen_songs = 0
     for song in songs:
@@ -507,16 +580,27 @@ def _sips_dims(path: Path) -> tuple[int, int] | None:
 def make_illustration(src: Path, dest: Path, force: bool = False,
                       max_dim: int = IMAGE_MAX_DIM,
                       quality: int = IMAGE_JPEG_QUALITY) -> None:
-    """Convert a PNG illustration into a small JPEG (never upscales)."""
+    """Convert a PNG illustration into a small JPEG (never upscales).
+
+    Uses macOS ``sips`` when available; otherwise falls back to ffmpeg so the
+    pipeline runs unchanged on Linux runners (image bytes may differ between the
+    two toolchains, which is fine for a fresh dataset).
+    """
     if dest.is_file() and dest.stat().st_size > 0 and not force:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".tmp.jpg")
-    dims = _sips_dims(src)
-    cmd = ["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(quality)]
-    if dims and max(dims) > max_dim:
-        cmd += ["-Z", str(max_dim)]
-    cmd += [str(src), "--out", str(tmp)]
+    if _tool("sips") is not None:
+        dims = _sips_dims(src)
+        cmd = ["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(quality)]
+        if dims and max(dims) > max_dim:
+            cmd += ["-Z", str(max_dim)]
+        cmd += [str(src), "--out", str(tmp)]
+    else:
+        # ffmpeg scale filter never upscales: min(max_dim, iw); keep aspect even.
+        cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(src),
+               "-vf", f"scale='min({max_dim},iw)':-2",
+               "-q:v", "3", str(tmp)]
     subprocess.run(cmd, check=True, capture_output=True)
     os.replace(tmp, dest)
 
@@ -1043,7 +1127,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="URL prefix for catalog resources; '{BASE}' is substituted by the server")
     p.add_argument("--uploader", type=int, default=UPLOADER_ID, help="catalog uploader user id")
     p.add_argument("--version", type=int, default=None, help="override catalog version")
-    p.add_argument("--jobs", type=int, default=8, help="parallel downloads")
+    p.add_argument("--jobs", type=int, default=8,
+                   help="parallel downloads (bounded; media derivation caps at 6 workers)")
+    p.add_argument("--data-dir", default=None,
+                   help="relocate the whole data tree (raw cache + charts/ + images/ + "
+                        "catalog.json + manifest); default is <repo root>/data")
     p.add_argument("--limit-mb", type=float, default=0,
                    help="stop adding chart packages once this many MB are built (0 = off)")
     p.add_argument("--illustration-source", choices=["auto", "full", "lowres"], default="auto",
@@ -1072,10 +1160,13 @@ def main(argv: list[str] | None = None) -> int:
     global _QUIET
     args = parse_args(argv)
     _QUIET = args.quiet
+    configure_paths(args.data_dir)
 
     if args.validate_only:
+        require_tools(need_encoding=False)
         return 1 if validate_catalog() else 0
 
+    require_tools(need_encoding=True)
     for d in (RAW_INFO, RAW_CHART, RAW_MUSIC, RAW_ILL, RAW_ILL_LOW, CHARTS, IMAGES):
         d.mkdir(parents=True, exist_ok=True)
 
