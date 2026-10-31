@@ -72,15 +72,27 @@ jobs:
           else
             gh release create "$CTAG" --repo "$GITHUB_REPOSITORY" \
               --title "Phira data $TAG (charts)" --notes "Chart packages for the static Shadowrocket setup."
-            xargs -n 50 gh release upload "$CTAG" --clobber --repo "$GITHUB_REPOSITORY" < upload-charts.txt
+            xargs -P 4 -n 20 gh release upload "$CTAG" --clobber --repo "$GITHUB_REPOSITORY" < upload-charts.txt
           fi
           if gh release view "$ATAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $ATAG already exists - skipping image upload (data unchanged)."
           else
             gh release create "$ATAG" --repo "$GITHUB_REPOSITORY" \
               --title "Phira data $TAG (images)" --notes "Illustrations / preview audio for the static Shadowrocket setup."
-            xargs -n 50 gh release upload "$ATAG" --clobber --repo "$GITHUB_REPOSITORY" < upload-assets.txt
+            xargs -P 4 -n 20 gh release upload "$ATAG" --clobber --repo "$GITHUB_REPOSITORY" < upload-assets.txt
           fi
+
+      - name: Save publish metadata (debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-metadata
+          path: |
+            release-plan.json
+            upload-charts.txt
+            upload-assets.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
