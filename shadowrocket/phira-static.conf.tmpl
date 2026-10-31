@@ -4,6 +4,8 @@
 # 资源索引（自动生成，勿改）: {{PAGES_BASE}}
 # 使用：Shadowrocket 生成并信任 CA 证书 → 对本配置开启 HTTPS 解密 → 使用配置。
 # 限制说明：翻页可用；搜索、排序、标签/评分筛选在静态版不生效（始终显示固定顺序的分页）。
+# 实现要点（Shadowrocket 2.2.77 实测）：列表/详情/排行榜等 GET 用 [URL Rewrite] 302 到 GitHub Pages 静态 JSON；
+# 评分与成绩上传（含 POST）用 [Map Local] 在本地合成响应（GitHub Pages 不接受 POST）。
 
 [General]
 bypass-system = true
@@ -32,13 +34,16 @@ FINAL,DIRECT
 ^https?://phira\.5wyxi\.com/chart\?(.*)page=([0-9]+)(.*)division=visual(.*)type=2(.*)$ {{PAGES_BASE}}/popular/page$2.json 302
 # ===== 自定义谱面 id（99xxxx）的附属接口 → 静态 JSON =====
 ^https?://phira\.5wyxi\.com/chart/(9[0-9]{5})$ {{PAGES_BASE}}/chart/$1.json 302
-^https?://phira\.5wyxi\.com/chart/(9[0-9]{5})/rate(\?.*)?$ {{PAGES_BASE}}/stub/rate.json 302
 ^https?://phira\.5wyxi\.com/record/best/(9[0-9]{5})(\?.*)?$ {{PAGES_BASE}}/stub/best.json 302
 ^https?://phira\.5wyxi\.com/record/list15/(9[0-9]{5})(\?.*)?$ {{PAGES_BASE}}/stub/record-list.json 302
 ^https?://phira\.5wyxi\.com/user/(9[0-9]{5})(\?.*)?$ {{PAGES_BASE}}/stub/user.json 302
-# ===== 游玩结束的成绩上传（POST）=====
-# TODO(shadowrocket-ops): replace with the verified mechanism (Map Local text / Script) returning:
+[Map Local]
+# ===== 本地直接合成响应（不需要网络；Shadowrocket 2.2.77 实测可用）=====
+# 评分接口（GET 查询 / POST 提交评分都命中）：返回固定的 {"score":0}
+^https?://phira\.5wyxi\.com/chart/9[0-9]{5}/rate data-type=base64 data="eyJzY29yZSI6MH0=" header="Content-Type: application/json"
+# 游玩结束的成绩上传（POST）。GitHub Pages 会拒绝 POST，所以这里用 Map Local 在本地直接返回合法 JSON：
 # {"id":1,"expDelta":0.0,"newBest":false,"improvement":0,"newRks":0.0}
+^https?://phira\.5wyxi\.com/play/upload data-type=base64 data="eyJpZCI6MSwiZXhwRGVsdGEiOjAuMCwibmV3QmVzdCI6ZmFsc2UsImltcHJvdmVtZW50IjowLCJuZXdSa3MiOjAuMH0=" header="Content-Type: application/json"
 
 [MITM]
 hostname = phira.5wyxi.com

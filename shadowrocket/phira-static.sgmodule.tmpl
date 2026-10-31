@@ -2,6 +2,7 @@
 #!desc=把 Phira「未上架 → 观赏」分区替换为 Phigros 谱面（静态资源托管在 GitHub，无需本地服务器）。请先安装并信任证书、对当前配置开启 HTTPS 解密。
 #
 # 资源索引: {{PAGES_BASE}}
+# 限制：翻页可用；搜索/排序/筛选在静态版不生效。评分与成绩上传由 [Map Local] 本地合成响应。
 
 [URL Rewrite]
 ^https?://phira\.5wyxi\.com/chart\?(.*)type=2(.*)division=visual(.*)page=([0-9]+)(.*)$ {{PAGES_BASE}}/popular/page$4.json 302
@@ -11,11 +12,13 @@
 ^https?://phira\.5wyxi\.com/chart\?(.*)page=([0-9]+)(.*)type=2(.*)division=visual(.*)$ {{PAGES_BASE}}/popular/page$2.json 302
 ^https?://phira\.5wyxi\.com/chart\?(.*)page=([0-9]+)(.*)division=visual(.*)type=2(.*)$ {{PAGES_BASE}}/popular/page$2.json 302
 ^https?://phira\.5wyxi\.com/chart/(9[0-9]{5})$ {{PAGES_BASE}}/chart/$1.json 302
-^https?://phira\.5wyxi\.com/chart/(9[0-9]{5})/rate(\?.*)?$ {{PAGES_BASE}}/stub/rate.json 302
 ^https?://phira\.5wyxi\.com/record/best/(9[0-9]{5})(\?.*)?$ {{PAGES_BASE}}/stub/best.json 302
 ^https?://phira\.5wyxi\.com/record/list15/(9[0-9]{5})(\?.*)?$ {{PAGES_BASE}}/stub/record-list.json 302
 ^https?://phira\.5wyxi\.com/user/(9[0-9]{5})(\?.*)?$ {{PAGES_BASE}}/stub/user.json 302
-# TODO(shadowrocket-ops): POST /play/upload mechanism here
+[Map Local]
+# 本地合成响应（评分 GET/POST + 成绩上传 POST；GitHub Pages 不接受 POST）
+^https?://phira\.5wyxi\.com/chart/9[0-9]{5}/rate data-type=base64 data="eyJzY29yZSI6MH0=" header="Content-Type: application/json"
+^https?://phira\.5wyxi\.com/play/upload data-type=base64 data="eyJpZCI6MSwiZXhwRGVsdGEiOjAuMCwibmV3QmVzdCI6ZmFsc2UsImltcHJvdmVtZW50IjowLCJuZXdSa3MiOjAuMH0=" header="Content-Type: application/json"
 
 [MITM]
 hostname = %APPEND% phira.5wyxi.com
