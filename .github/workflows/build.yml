@@ -64,33 +64,19 @@ jobs:
           python3 publish/publish.py --repo "$GITHUB_REPOSITORY" --pages-base "$PAGES_BASE"
 
       - name: Upload chart packages + images to GitHub Releases
+        timeout-minutes: 150
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           TAG=$(python3 -c "import json;print(json.load(open('release-plan.json'))['tag'])")
-          CTAG="$TAG-charts"
-          ATAG="$TAG-assets"
-          CH_N=$(wc -l < upload-charts.txt | tr -d ' ')
-          AS_N=$(wc -l < upload-assets.txt | tr -d ' ')
-          have() { gh release view "$1" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets|length' 2>/dev/null || echo 0; }
-          if [ "$(have "$CTAG")" = "$CH_N" ]; then
-            echo "Release $CTAG already complete ($CH_N charts) - skip."
-          else
-            gh release view "$CTAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-              gh release create "$CTAG" --repo "$GITHUB_REPOSITORY" \
-                --title "Phira data $TAG (charts)" --notes "Chart packages for the static Shadowrocket setup."
-            xargs -P 4 -n 20 gh release upload "$CTAG" --clobber --repo "$GITHUB_REPOSITORY" < upload-charts.txt
-          fi
-          if [ "$(have "$ATAG")" = "$AS_N" ]; then
-            echo "Release $ATAG already complete ($AS_N assets) - skip."
-          else
-            gh release view "$ATAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-              gh release create "$ATAG" --repo "$GITHUB_REPOSITORY" \
-                --title "Phira data $TAG (images)" --notes "Illustrations / preview audio for the static Shadowrocket setup."
-            xargs -P 4 -n 20 gh release upload "$ATAG" --clobber --repo "$GITHUB_REPOSITORY" < upload-assets.txt
-          fi
+          python3 publish/upload_assets.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$TAG" \
+            --charts-list upload-charts.txt \
+            --assets-list upload-assets.txt \
+            --meta published/catalog.json published/version.json
 
       - name: Save publish metadata (debugging)
         if: always()
